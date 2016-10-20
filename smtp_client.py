@@ -1,25 +1,31 @@
 # -*- coding: utf-8 -*-
 
 import smtplib
-import argparse
 import socket
+import ConfigParser
+import shutil
+import base64
+import tempfile
 
-parser = argparse.ArgumentParser(add_help = True, description = 'Simple SMTP client')
-parser.add_argument('-s', '--server', required = True, help = 'SMTP server host')
-parser.add_argument('-p', '--port', required = True, help = 'SMTP server port')
-parser.add_argument('-u', '--username', required = True, help = 'Username for SMTP server')
-parser.add_argument('-P', '--password', required = True, help = 'Password for SMTP server')
-parser.add_argument('-m', '--message', required = True, help = 'Message in HTML')
-parser.add_argument('-f', '--fromSen', required = False, help = 'Sender field')
-parser.add_argument('-e', '--emails', required = True, help = 'Receivers list')
-args = parser.parse_args()
+config = ConfigParser.RawConfigParser()
+config.read('configs.conf')
 
-if args.fromSen is None:
-    args.fromSen = args.username
+server = config.get('Server', 'server')
+port = config.getint('Server', 'port')
+username = config.get('Server', 'username')
+password = config.get('Server', 'password')
+message = config.get('Server', 'message')
+fromSen = config.get('Server', 'fromSen')
+emails = config.get('Server', 'emails')
+track = config.getboolean('Server', 'track')
+trackURL = config.get('Server', 'trackingHandler')
 
-def prepare_mail_list():
+if fromSen is None:
+    fromSen = username
+
+def prepare_mail_list(f):
     try:
-        emails = open(args.emails, 'r')
+        emails = open(f, 'r')
     except IOError:
         raise SystemExit('[FATAL] Wrong path to emails file')
     receivers = []
@@ -30,30 +36,57 @@ def prepare_mail_list():
             mail.replace(' ', '')
     return receivers
 
-def prepare_message():
-    try:
-        message = open(args.message, 'r')
-        msg = message.read() # Check what we can do with blank lines
-        return msg
-    except IOError:
-        raise SystemExit('[FATAL] Wrong path to message file')
+def prepare_message(mes, t, mail):
+    if t:
+        try:
+            with open(mes) as msg:
+                html = msg.readlines()
+                injection = '<img alt="" src="%suser=%s" width="1" height="1" border="0" />' % (trackURL, base64.b64encode(mail))
+                html_list = []
+
+                for line in html:
+                    html_list.append(line)
+
+                html_list.insert(-2, injection)
+                tmp_file = str(mes+'.tmp')
+                shutil.copy(mes, tmp_file)
+
+                with open(tmp_file, 'r+') as tmp:
+                    for line in html_list:
+                        tmp.writelines('\n'+line)
+                    return tmp.read()   #  Returning raw text
+        except Exception:
+            print Exception
+    else:
+        try:
+            with open(m, 'r') as message:
+                msg = message.read()
+                return msg
+        except IOError:
+            raise SystemExit('[FATAL] Wrong path to message file')
 
 def main():
+
     try:
-        print 'Hello'
-        smtpClient = smtplib.SMTP(args.server, args.port)
+        smtpClient = smtplib.SMTP(server, port)
         print 'Starting SMTP TLS'
         smtpClient.starttls()
-        smtpClient.login(args.username, args.password)
-        print 'Login successfull!'
-        to_list = prepare_mail_list()
+
+        if smtpClient.login(username, password): # Trying to login to the server
+            print "Login successfull!"
+        elif Exception:
+            print Exception
+
+        to_list = prepare_mail_list(emails)
         print to_list
+
         for mail in to_list:
-            print 'Sending mail from %s to %s.' % (args.username, mail)
-            smtpClient.sendmail(args.fromSen, mail, prepare_message())
+            print 'Sending mail from %s to %s.' % (username, mail)
+            smtpClient.sendmail(fromSen, mail, prepare_message(message, track, mail))
 
         smtpClient.close()
         print 'Success!'
+
     except (socket.error, smtplib.SMTPException), e:
         errcode = getattr(e, 'smtp_code', -1)
         errmsg = getattr(e, 'smtp_error', 'ignore')
